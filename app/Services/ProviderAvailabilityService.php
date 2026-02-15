@@ -44,14 +44,12 @@ class ProviderAvailabilityService
     {
         $date = Carbon::parse($date);
 
-        // 1️⃣ نأتي بالخدمة ومدة التنفيذ الخاصة بها عند هذا المزود
         $service = $provider->services()
             ->where('services.id', $serviceId)
             ->firstOrFail();
 
-        $duration = $service->pivot->duration; // مدة الخدمة بالدقائق
+        $duration = $service->pivot->duration;
 
-        // 2️⃣ نأتي بجدول المزود لهذا اليوم
         $schedules = $provider->schedules()
             ->where('day_of_week', $date->dayOfWeek)
             ->get();
@@ -72,7 +70,6 @@ class ProviderAvailabilityService
                 $slotStart = $start->copy();
                 $slotEnd   = $start->copy()->addMinutes($duration);
 
-                // 3️⃣ نتأكد أنه غير محجوز
                 $isBooked = Appointment::where('provider_id', $provider->id)
                     ->whereDate('date', $date->toDateString())
                     ->where(function ($q) use ($slotStart, $slotEnd) {
