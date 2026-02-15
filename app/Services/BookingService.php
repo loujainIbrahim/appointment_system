@@ -4,57 +4,85 @@ namespace App\Services;
 
 use App\Models\Appointment;
 use App\Models\Service as ServiceModel;
-use App\Models\Availability;
+use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Carbon\Carbon;
 
 class BookingService
 {
-    public  function create(array $data, $user): Appointment
+    public function create(array $data, $user): Appointment
     {
         return DB::transaction(function () use ($data, $user) {
 
+            $provider = User::lockForUpdate()->findOrFail($data['provider_id']);
 
-            $service = ServiceModel::findOrFail($data['service_id']);
-            $providerId = $data['provider_id'];
+            $service = $provider->services()
+                ->where('services.id', $data['service_id'])
+                ->firstOrFail();
 
-            $pivot = $service->providers()
-                ->where('user_id', $providerId)
-                ->firstOrFail()
-                ->pivot;
+            $duration = $service->pivot->duration;
 
             $start = Carbon::parse($data['date'] . ' ' . $data['start_time']);
-            $end = $start->copy()->addMinutes($pivot->duration);
+            $end = $start->copy()->addMinutes($duration);
+            $availability = $provider->availabilities()
+                ->whereDate('date', $data['date'])
+                ->first();
 
-            $available = Availability::where('provider_id', $providerId)
-                ->where('date', $data['date'])
-                ->where('start_time', '<=', $start)
-                ->where('end_time', '>=', $end)
-                ->exists();
+            if ($availability) {
 
-            if (!$available) {
-                throw new \Exception('Provider not available');
+                if ($availability->is_available == false) {
+                    throw new \Exception('Provider is on leave this day.');
+                }
+
+                if (
+                    $availability->start_time &&
+                    $availability->end_time &&
+                    (
+                        $start->format('H:i:s') < $availability->start_time ||
+                        $end->format('H:i:s') > $availability->end_time
+                    )
+                ) {
+                    throw new \Exception('Time outside special availability hours.');
+                }
+            } else {
+
+                $schedule = $provider->schedules()
+                    ->where('day_of_week', $start->dayOfWeek)
+                    ->first();
+
+                if (! $schedule) {
+                    throw new \Exception('Provider does not work this day.');
+                }
+
+                if (
+                    $start->format('H:i:s') < $schedule->start_time ||
+                    $end->format('H:i:s') > $schedule->end_time
+                ) {
+                    throw new \Exception('Time outside working hours.');
+                }
             }
 
-            $conflict = Appointment::where('provider_id', $providerId)
-                ->where('date', $data['date'])
+            $conflict = Appointment::where('provider_id', $provider->id)
+                ->whereDate('date', $data['date'])
                 ->where(function ($q) use ($start, $end) {
-                    $q->whereBetween('start_time', [$start, $end])
-                        ->orWhereBetween('end_time', [$start, $end]);
-                })->exists();
+                    $q->where('start_time', '<', $end->format('H:i:s'))
+                        ->where('end_time', '>', $start->format('H:i:s'));
+                })
+                ->lockForUpdate()
+                ->exists();
 
             if ($conflict) {
-                throw new \Exception('Time already booked');
+                throw new \Exception('Time already booked.');
             }
 
             return Appointment::create([
                 'customer_id' => $user->id,
-                'provider_id' => $providerId,
+                'provider_id' => $provider->id,
                 'service_id' => $service->id,
                 'date' => $data['date'],
-                'start_time' => $start,
-                'end_time' => $end,
-                'price' => $pivot->price,
+                'start_time' => $start->format('H:i:s'),
+                'end_time' => $end->format('H:i:s'),
+                'price' => $service->pivot->price,
             ]);
         });
     }

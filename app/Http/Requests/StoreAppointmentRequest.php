@@ -11,7 +11,7 @@ class StoreAppointmentRequest extends FormRequest
      */
     public function authorize(): bool
     {
-       return $this->user()->can('book-appointment');
+        return $this->user()->can('book-appointment');
     }
 
     /**
@@ -21,7 +21,7 @@ class StoreAppointmentRequest extends FormRequest
      */
     public function rules(): array
     {
-         return [
+        return [
             'provider_id' => 'required|exists:users,id',
             'service_id' => 'required|exists:services,id',
             'date' => 'required|date|after_or_equal:today',

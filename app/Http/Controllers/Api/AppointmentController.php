@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use App\Http\Requests\StoreAppointmentRequest;
+use App\Models\User;
 use App\Services\BookingService;
 
 class AppointmentController extends Controller
@@ -29,10 +30,11 @@ class AppointmentController extends Controller
      */
 
     public function store(StoreAppointmentRequest $request)
-    {  
+    {
         $appointment = $this->bookingService->create(
             $request->validated(),
             $request->user()
+
         );
 
         return response()->json([
