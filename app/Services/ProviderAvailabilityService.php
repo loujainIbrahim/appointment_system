@@ -21,17 +21,27 @@ class ProviderAvailabilityService
         $period = CarbonPeriod::create($today, $endDate);
 
         $schedules = $provider->schedules()->get();
-
         $availableDates = [];
 
         foreach ($period as $date) {
 
-            foreach ($schedules as $schedule) {
+            $hasSchedule = $schedules
+                ->where('day_of_week', $date->dayOfWeek)
+                ->isNotEmpty();
 
-                if ($date->dayOfWeek == $schedule->day_of_week) {
-                    $availableDates[] = $date->toDateString();
-                }
+            if (! $hasSchedule) {
+                continue;
             }
+
+            $availability = $provider->availabilities()
+                ->whereDate('date', $date->toDateString())
+                ->first();
+
+            if ($availability && $availability->is_available == false) {
+                continue;
+            }
+
+            $availableDates[] = $date->toDateString();
         }
 
         return array_values(array_unique($availableDates));
@@ -50,20 +60,46 @@ class ProviderAvailabilityService
 
         $duration = $service->pivot->duration;
 
-        $schedules = $provider->schedules()
-            ->where('day_of_week', $date->dayOfWeek)
-            ->get();
+        $availability = $provider->availabilities()
+            ->whereDate('date', $date->toDateString())
+            ->first();
 
-        if ($schedules->isEmpty()) {
+        if ($availability && $availability->is_available == false) {
             return [];
+        }
+
+        if ($availability && $availability->start_time && $availability->end_time) {
+
+            $workPeriods = [
+                [
+                    'start' => $availability->start_time,
+                    'end'   => $availability->end_time
+                ]
+            ];
+        } else {
+
+            $schedules = $provider->schedules()
+                ->where('day_of_week', $date->dayOfWeek)
+                ->get();
+
+            if ($schedules->isEmpty()) {
+                return [];
+            }
+
+            $workPeriods = $schedules->map(function ($schedule) {
+                return [
+                    'start' => $schedule->start_time,
+                    'end'   => $schedule->end_time
+                ];
+            })->toArray();
         }
 
         $slots = [];
 
-        foreach ($schedules as $schedule) {
+        foreach ($workPeriods as $period) {
 
-            $start = Carbon::parse($date->toDateString() . ' ' . $schedule->start_time);
-            $end   = Carbon::parse($date->toDateString() . ' ' . $schedule->end_time);
+            $start = Carbon::parse($date->toDateString() . ' ' . $period['start']);
+            $end   = Carbon::parse($date->toDateString() . ' ' . $period['end']);
 
             while ($start->copy()->addMinutes($duration) <= $end) {
 
@@ -73,8 +109,11 @@ class ProviderAvailabilityService
                 $isBooked = Appointment::where('provider_id', $provider->id)
                     ->whereDate('date', $date->toDateString())
                     ->where(function ($q) use ($slotStart, $slotEnd) {
-                        $q->whereBetween('start_time', [$slotStart->format('H:i:s'), $slotEnd->format('H:i:s')])
-                          ->orWhereBetween('end_time', [$slotStart->format('H:i:s'), $slotEnd->format('H:i:s')]);
+
+                        $q->where(function ($query) use ($slotStart, $slotEnd) {
+                            $query->where('start_time', '<', $slotEnd->format('H:i:s'))
+                                ->where('end_time', '>', $slotStart->format('H:i:s'));
+                        });
                     })
                     ->exists();
 
